@@ -1,0 +1,37 @@
+{
+  "name": "line-cua-mcp",
+  "version": "0.1.0",
+  "description": "macOS LINE Desktop MCP server: background chat-history reads from the local encrypted DB, plus cursor-free UI sends via cua-driver.",
+  "license": "MIT",
+  "author": "Dawson",
+  "keywords": [
+    "mcp",
+    "line",
+    "macos",
+    "cua-driver",
+    "sqlite",
+    "model-context-protocol"
+  ],
+  "type": "module",
+  "bin": "./dist/server.js",
+  "main": "./dist/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && cp src/ocr.swift dist/ocr.swift && cp src/linedb.py dist/linedb.py",
+    "dev": "tsx src/server.ts",
+    "probe": "tsx src/probe.ts",
+    "verify": "tsx src/verify-cua.ts",
+    "test": "yarn build && node test/matcher.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
