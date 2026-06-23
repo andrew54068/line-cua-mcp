@@ -239,3 +239,32 @@ export function invalidateSnapshot(pid: number, windowId: number): void {
 export async function checkPermissions(): Promise<any> {
   return cua("check_permissions", {});
 }
+
+/** Activate a window so synthesized keystrokes (e.g. scroll's PageUp) land on
+ *  it. Unlike the background read path, this DOES foreground the app — callers
+ *  that need to stay background must not use it (and should restore focus). */
+export async function bringToFront(pid: number, windowId: number): Promise<void> {
+  await cua("bring_to_front", { pid, window_id: windowId });
+}
+
+/**
+ * Scroll the target pid's focused region. cua-driver implements this with
+ * synthesized keys: by:"page" → PageUp/PageDown × amount, by:"line" → arrow
+ * keys × amount. Pre-focuses element_index first when given with windowId.
+ * NOTE: this drives the UI by keystroke — it is NOT part of the background DB
+ * read path.
+ */
+export async function scroll(
+  pid: number,
+  direction: "up" | "down" | "left" | "right",
+  opts: { by?: "page" | "line"; amount?: number; windowId?: number; elementIndex?: number } = {},
+): Promise<void> {
+  await cua("scroll", {
+    pid,
+    direction,
+    ...(opts.by ? { by: opts.by } : {}),
+    ...(opts.amount != null ? { amount: opts.amount } : {}),
+    ...(opts.windowId != null ? { window_id: opts.windowId } : {}),
+    ...(opts.elementIndex != null ? { element_index: opts.elementIndex } : {}),
+  });
+}

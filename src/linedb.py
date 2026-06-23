@@ -187,6 +187,29 @@ def read_history(con, chat_id, limit=0):
     return msgs
 
 
+def chat_coverage(con, chat_id):
+    """Local-DB coverage for a chat: how much of the history is actually stored
+    on THIS Mac. The DB only holds what LINE Desktop has synced locally; older
+    messages that were never loaded are absent. Cheap (single aggregate query),
+    so the UI sync path can poll it between scroll rounds."""
+    row = con.execute(
+        "SELECT COUNT(*), MIN(_createdTime), MAX(_createdTime) "
+        "FROM _message WHERE _chatId=?", (chat_id,)
+    ).fetchone()
+    total = row[0] if row else 0
+    oldest = row[1] if row and row[1] is not None else None
+    newest = row[2] if row and row[2] is not None else None
+    return {
+        "source": "local-line-desktop-db",
+        "localMessageCount": total,
+        "oldestLocalMessage": iso(oldest),
+        "oldestLocalMessageTs": oldest,
+        "newestLocalMessage": iso(newest),
+        "newestLocalMessageTs": newest,
+        "mayExcludeRemoteUnsyncedHistory": True,
+    }
+
+
 TZ = ZoneInfo("Asia/Taipei")
 
 
@@ -275,6 +298,7 @@ def main():
     sub.add_parser("status")
     p = sub.add_parser("list-chats"); p.add_argument("--limit", type=int, default=50)
     p = sub.add_parser("read"); p.add_argument("name"); p.add_argument("--limit", type=int, default=0)
+    p = sub.add_parser("coverage"); p.add_argument("name")
     p = sub.add_parser("search"); p.add_argument("text"); p.add_argument("--limit", type=int, default=50)
     p = sub.add_parser("export-md")
     p.add_argument("--name"); p.add_argument("--chat-id", dest="chat_id")
@@ -301,8 +325,17 @@ def main():
         print(json.dumps(list_chats(con, a.limit), ensure_ascii=False, indent=2))
     elif a.cmd == "read":
         cid = resolve_chat(con, a.name)
+        msgs = read_history(con, cid, a.limit)
+        cov = chat_coverage(con, cid)
+        cov["returnedMessageCount"] = len(msgs)
+        cov["limitApplied"] = bool(a.limit and a.limit > 0)
         print(json.dumps({"chatId": cid, "name": chat_name(con, cid),
-                          "messages": read_history(con, cid, a.limit)},
+                          "messages": msgs, "coverage": cov},
+                         ensure_ascii=False, indent=2))
+    elif a.cmd == "coverage":
+        cid = resolve_chat(con, a.name)
+        print(json.dumps({"chatId": cid, "name": chat_name(con, cid),
+                          **chat_coverage(con, cid)},
                          ensure_ascii=False, indent=2))
     elif a.cmd == "search":
         me = my_mid(con)
