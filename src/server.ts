@@ -11,6 +11,7 @@ import {
   locateLine,
   selectChat,
   sendMessage,
+  syncOlderMessages,
 } from "./line.js";
 import { checkPermissions } from "./driver.js";
 import { dbStatus, listChats, readChat, formatHistory } from "./linedb.js";
@@ -43,7 +44,7 @@ const TOOLS = [
   {
     name: "read_history",
     description:
-      "Read a chat's message history from LINE's local encrypted database — FULLY in the background: no cursor, no window focus change, no OCR, no scrolling. Returns the COMPLETE history (every message, not just the visible viewport), with sender direction and timestamps. Decrypts a read-only snapshot of LINE's wxSQLite3 DB using the account key in the macOS keychain. Identify the chat by name (1:1, group, or community); pass limit to cap to the most recent N messages.",
+      "Read a chat's message history from LINE's local encrypted database — FULLY in the background: no cursor, no window focus change, no OCR, no scrolling. Returns the complete history PRESENT IN THE LOCAL DB (every locally-stored message, not just the visible viewport), with sender direction and timestamps, plus a `coverage` footer (local count, oldest/newest stored). Messages that were never synced to this Mac are NOT included — use sync_older_messages to backfill older history first. Decrypts a read-only snapshot of LINE's wxSQLite3 DB using the account key in the macOS keychain. Identify the chat by name (1:1, group, or community); pass limit to cap to the most recent N messages.",
     inputSchema: {
       type: "object",
       properties: {
@@ -67,6 +68,29 @@ const TOOLS = [
       properties: {
         limit: { type: "integer", description: "Max chats to return. Default 50.", minimum: 1 },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "sync_older_messages",
+    description:
+      "Best-effort: backfill OLDER history into the local DB for one chat by driving the LINE UI. UNLIKE read_history / list_chats this is NOT background — it foregrounds LINE, opens the chat, and scrolls the conversation upward so LINE Desktop fetches older messages from its servers and persists them to the local encrypted DB; focus is restored afterward and the cursor never moves. Requires LINE to be running. Reliability depends on LINE's UI/network; returns before/after local coverage (count + oldest stored, newOlderMessages, oldestMovedBack) so you can see what backfilled. After it runs, call read_history again to get the expanded history.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Exact chat name (or chatId) to backfill." },
+        maxRounds: {
+          type: "integer",
+          description: "Max scroll-up rounds before stopping. Default 8. Stops early after 2 rounds with no new older messages.",
+          minimum: 1,
+        },
+        pagesPerRound: {
+          type: "integer",
+          description: "PageUp presses per round. Default 5.",
+          minimum: 1,
+        },
+      },
+      required: ["name"],
       additionalProperties: false,
     },
   },
@@ -143,6 +167,14 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "list_chats": {
         const chats = await listChats((args as any).limit ?? 50);
         return ok(JSON.stringify(chats, null, 2));
+      }
+      case "sync_older_messages": {
+        const h = await locateLine();
+        const res = await syncOlderMessages(h, String((args as any).name), {
+          maxRounds: (args as any).maxRounds,
+          pagesPerRound: (args as any).pagesPerRound,
+        });
+        return ok(JSON.stringify(res, null, 2));
       }
       case "send_message": {
         const h = await locateLine();

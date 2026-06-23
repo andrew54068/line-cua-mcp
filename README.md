@@ -18,7 +18,7 @@ macOS 專用的 LINE Desktop MCP server。**讀取**訊息時，直接讀 LINE �
 
 ## 兩條資料路徑
 
-- **讀取是資料庫路徑。** macOS 版 LINE Desktop 是 **Qt6/QML** app，訊息文字由 GPU 繪製，accessibility tree 裡拿不到；但完整歷史訊息存在本機 **wxSQLite3 / QtCipherSqlitePlugin AES-128-CBC** 加密 SQLite DB（`…/Data/db/qwb*.edb`）。`read_history` / `list_chats` 會用 macOS keychain 裡的帳號金鑰解開唯讀快照，回傳**完整**歷史紀錄（sender、timestamp、direction）。這條路徑完全背景執行，不碰 UI。舊版曾用 OCR 讀螢幕，只能看到目前畫面；那條路徑已移除。
+- **讀取是資料庫路徑。** macOS 版 LINE Desktop 是 **Qt6/QML** app，訊息文字由 GPU 繪製，accessibility tree 裡拿不到；但歷史訊息存在本機 **wxSQLite3 / QtCipherSqlitePlugin AES-128-CBC** 加密 SQLite DB（`…/Data/db/qwb*.edb`）。`read_history` / `list_chats` 會用 macOS keychain 裡的帳號金鑰解開唯讀快照，回傳**本機 DB 內現有的**歷史紀錄（每一則本機已存的訊息，含 sender、timestamp、direction），並附上涵蓋範圍（本機則數、最舊／最新時間）。本機 DB 只存有 LINE Desktop 已同步到這台 Mac 的訊息；從未載入到本機的較舊訊息不在其中（可用 `sync_older_messages` 回補）。這條路徑完全背景執行，不碰 UI。舊版曾用 OCR 讀螢幕，只能看到目前畫面；那條路徑已移除。
 - **送訊息是 UI 路徑，但不移動游標。** 不能靠改 DB 送訊息，所以 `send_message` 會透過 cua-driver 操作 LINE UI：CGEvent 會送到指定座標／按鍵，但不 warp 可見游標；LINE 可能短暫跳到前景開啟目標聊天，完成後會把原本的前景 app 切回來。
 
 ## MCP 工具
@@ -27,7 +27,8 @@ macOS 專用的 LINE Desktop MCP server。**讀取**訊息時，直接讀 LINE �
 |------|------|
 | `line_status` | 回報 LINE UI 是否可用，以及本機 DB／金鑰／解密狀態。DB-backed 讀取（`list_chats` / `read_history`）不需要 LINE 正在執行；只有 UI 工具需要。 |
 | `list_chats` | 從本機 DB 列出最近聊天（name、chatId、最後活動時間、是否群組）。完全背景執行。 |
-| `read_history` | 依名稱或 chatId 從已解密的本機 DB 讀取聊天的**完整**歷史紀錄：文字、direction、絕對時間戳。不移動游標、不切前景、不用 OCR。 |
+| `read_history` | 依名稱或 chatId 從已解密的本機 DB 讀取聊天**本機已存的**歷史紀錄：文字、direction、絕對時間戳，並附本機涵蓋範圍。不移動游標、不切前景、不用 OCR。 |
+| `sync_older_messages` | **盡力而為、走 UI（非背景）：** 讓 LINE 跳到前景並把聊天往上捲，促使 LINE 把較舊訊息回補進本機 DB。不移動游標、會還原焦點，並回報前後涵蓋範圍。需要 LINE 正在執行。 |
 | `select_chat` | 透過 UI 開啟指定聊天（搜尋 → pixel-click 第一筆結果）。供 `send_message` 使用。不移動游標；會還原焦點。 |
 | `send_message` | 透過 UI 對指定聊天送出或留下草稿。送出前有 anchored name、1:1-only、DB cross-check 等防護。 |
 
@@ -92,7 +93,7 @@ security find-generic-password -s line-cua-mcp-dbkey -w   # 讀回金鑰
 純 matcher / 交叉比對邏輯有 unit tests（`yarn test`）。DB 交叉比對補上 header OCR 可能 fail-open 的兩類問題：
 
 - **把群組誤當 1:1**：即使 `(N)` badge 被裁掉或 OCR 錯讀，仍會用 DB 的 `isGroup` 拒絕。`isGroup` 是 fail-closed：只要不是 `u` 開頭的 1:1 聯絡人（例如群組、多人聊天室、LINE Square community、未知未來類型），都視為 group。
-- **錯人**，包含兩個方向：*extension* — OCR 標題解析成另一個已知聊天（例如目標 `小明`，實際開到 `小明華`）；*truncation* — 標題是另一個已知聊天名稱的嚴格前綴（可能是 OCR 把長名字裁短）。兩者都拒絕；目標名稱有歧義也拒絕。
+- **送錯對象**，包含兩個方向：*extension* — OCR 標題解析成另一個已知聊天（例如目標 `小明`，實際開到 `小明華`）；*truncation* — 標題是另一個已知聊天名稱的嚴格前綴（可能是 OCR 把長名字裁短）。兩者都拒絕；目標名稱有歧義也拒絕。
 
 **殘餘限制與取捨：** 交叉比對需要本機 DB（金鑰在 keychain）；如果 DB 不可用，會降級成只靠 OCR 的保護機制並寫 log。若某個 1:1 名稱剛好是另一個聊天名稱的嚴格前綴，會被 truncation guard 拒絕；請改用完整名稱或精確 chatId。因為目前沒有獨立訊號能知道畫面上實際是哪個 chat，以下狀況無法只靠名稱完全解掉：兩個聊天顯示名稱完全相同（其中一個是群組）；或某個新聊天還沒寫進本機 DB，而它的較長標題剛好被 OCR 裁短成目標名稱。預設仍是 `auto: false`，送出前請先檢查草稿。
 

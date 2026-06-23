@@ -4,9 +4,11 @@
 //   - frontmost app before/after -> LINE must NOT become frontmost if it
 //     wasn't already (no focus steal)
 // Emits a JSON report + asserts. Honors the safety rule: the ONLY real send
-// goes to a 1:1 chat passed as argv (default "明").
+// goes to a 1:1 chat whose name you pass as argv. There is NO default — you
+// must name your own 1:1 test chat explicitly, so the script can never send to
+// a real contact by accident.
 //
-//   yarn tsx src/verify-cua.ts "明"
+//   yarn tsx src/verify-cua.ts "<your-1:1-test-chat>"
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -16,7 +18,14 @@ import { cua, closeDriver } from "./driver.js";
 
 const execFileAsync = promisify(execFile);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const SELF_CHAT = process.argv[2] ?? "明";
+const SELF_CHAT = process.argv[2];
+if (!SELF_CHAT) {
+  console.error(
+    'Usage: yarn tsx src/verify-cua.ts "<your-1:1-test-chat>"\n' +
+      "Pass the name of a 1:1 chat you own — this script sends it a real message.",
+  );
+  process.exit(2);
+}
 const OUT = "/tmp/cua-verify";
 
 async function cursor(): Promise<{ x: number; y: number }> {

@@ -18,7 +18,7 @@ This is an **experimental personal tool**, not a polished product and not commer
 
 ## Two paths
 
-- **Reads are database-backed.** LINE Desktop for macOS is a **Qt6/QML** app whose message text is GPU-rendered and absent from the accessibility tree. But full message history lives in LINE's local **wxSQLite3 / QtCipherSqlitePlugin AES-128-CBC** encrypted SQLite DB (`…/Data/db/qwb*.edb`). `read_history` / `list_chats` decrypt a read-only snapshot using the account key in the macOS keychain and return **complete** history with sender, timestamp, and direction. This path is fully backgrounded and never touches the UI. Earlier versions OCR'd the screen and could only see the visible viewport; that path is gone.
+- **Reads are database-backed.** LINE Desktop for macOS is a **Qt6/QML** app whose message text is GPU-rendered and absent from the accessibility tree. But message history lives in LINE's local **wxSQLite3 / QtCipherSqlitePlugin AES-128-CBC** encrypted SQLite DB (`…/Data/db/qwb*.edb`). `read_history` / `list_chats` decrypt a read-only snapshot using the account key in the macOS keychain and return the **history present in the local DB** — every locally-stored message, with sender, timestamp, and direction — plus a coverage footer (local count, oldest/newest stored). The DB only holds what LINE Desktop has synced to this Mac; older messages never loaded locally are absent (use `sync_older_messages` to backfill). This path is fully backgrounded and never touches the UI. Earlier versions OCR'd the screen and could only see the visible viewport; that path is gone.
 - **Sends are UI-driven, but cursor-free.** You cannot send by mutating the DB, so `send_message` drives the LINE UI through cua-driver: CGEvents are posted to target coordinates / keys without warping the visible cursor. LINE may briefly come forward to open the target chat, then the previous foreground app is restored.
 
 ## MCP tools
@@ -27,7 +27,8 @@ This is an **experimental personal tool**, not a polished product and not commer
 |------|---------|
 | `line_status` | Report LINE UI availability plus local DB/key/decryption status. LINE does **not** need to be running for DB-backed reads; only UI tools require it. |
 | `list_chats` | List recent chats from the local DB: name, chatId, last-activity time, and whether it is a group. Fully backgrounded. |
-| `read_history` | Read a chat's **complete** history by name or chatId from the decrypted local DB: text, direction, and absolute timestamps. No cursor, focus change, OCR, or scrolling. |
+| `read_history` | Read a chat's history (present in the local DB) by name or chatId from the decrypted DB: text, direction, absolute timestamps, plus a local-coverage footer. No cursor, focus change, OCR, or scrolling. |
+| `sync_older_messages` | **Best-effort, UI-driven (not background):** foregrounds LINE and scrolls a chat upward so LINE backfills older messages into the local DB. Cursor-free, focus restored. Reports before/after coverage. Requires LINE running. |
 | `select_chat` | Open a chat through the UI (search → pixel-click the top result). Used by `send_message`. Cursor-free; focus is restored. |
 | `send_message` | Draft or send a message through the UI. Guarded by anchored name matching, 1:1-only defaults, and a DB cross-check. |
 
