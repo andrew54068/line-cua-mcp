@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="line-cua-mcp banner">
+  <title>line-cua-mcp banner</title>
+  <defs>
+    <linearGradient id="panelGradient" x1="16" y1="16" x2="1264" y2="304" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1E1B4B"/>
+      <stop offset="0.58" stop-color="#312E81"/>
+      <stop offset="1" stop-color="#4338CA"/>
+    </linearGradient>
+    <linearGradient id="markGradient" x1="88" y1="68" x2="248" y2="224" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="0.54" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+    <linearGradient id="markAccentGradient" x1="104" y1="94" x2="230" y2="210" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4338CA"/>
+      <stop offset="1" stop-color="#312E81"/>
+    </linearGradient>
+    <linearGradient id="wireGradient" x1="824" y1="96" x2="1180" y2="230" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A78BFA" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#6366F1" stop-opacity="0.08"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="1248" height="288" rx="44" fill="url(#panelGradient)"/>
+  <path d="M818 108h132c22 0 40 18 40 40s18 40 40 40h150" fill="none" stroke="url(#wireGradient)" stroke-width="4" stroke-linecap="round"/>
+  <path d="M858 226h88c16 0 29-13 29-29s13-29 29-29h70" fill="none" stroke="#A78BFA" stroke-width="3" stroke-linecap="round" opacity="0.18"/>
+  <circle cx="1030" cy="188" r="9" fill="#A78BFA" opacity="0.42"/>
+  <circle cx="1178" cy="188" r="6" fill="#A78BFA" opacity="0.28"/>
+  <circle cx="1074" cy="168" r="5" fill="#FFFFFF" opacity="0.28"/>
+  <g transform="translate(64 44) scale(0.86)">
+    <path
+      d="M66 42h103c28 0 51 23 51 51v31c0 28-23 51-51 51h-16v15h52c12 0 22 10 22 22v13h-16v-14c0-3-3-6-6-6h-11v20h-16v-20h-25c-9 0-16-7-16-16v-14H66c-28 0-51-23-51-51V93c0-28 23-51 51-51Z"
+      fill="#050816"
+      opacity="0.3"
+      transform="translate(0 7)"
+    />
+    <path
+      d="M66 42h103c28 0 51 23 51 51v31c0 28-23 51-51 51h-16v15h52c12 0 22 10 22 22v13h-16v-14c0-3-3-6-6-6h-11v20h-16v-20h-25c-9 0-16-7-16-16v-14H66c-28 0-51-23-51-51V93c0-28 23-51 51-51Z"
+      fill="url(#markGradient)"
+    />
+    <path
+      d="M151 176v13c0 1 1 2 2 2h52c7 0 14 4 18 9-4-15-17-25-33-25h-39Z"
+      fill="url(#markAccentGradient)"
+      opacity="0.34"
+    />
+    <rect x="51" y="80" width="118" height="14" rx="7" fill="#FFFFFF" opacity="0.9"/>
+    <rect x="51" y="110" width="88" height="14" rx="7" fill="#DDD6FE" opacity="0.78"/>
+    <circle cx="174" cy="117" r="8" fill="#FFFFFF" opacity="0.84"/>
+    <path d="M193 205v20h-15v-20h15Zm34 7v13h-16v-14c0-3-3-6-6-6h-11v20h-1v-20h12c10 0 18 3 22 7Z" fill="#312E81" opacity="0.32"/>
+  </g>
+  <text x="318" y="139" fill="#F5F3FF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="70" font-weight="760" letter-spacing="0">
+    line-<tspan fill="#C4B5FD" font-weight="820">cua</tspan><tspan fill="#F5F3FF">-mcp</tspan>
+  </text>
+  <text x="322" y="190" fill="#DDD6FE" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="500" letter-spacing="0">
+    Read LINE's local DB · send cursor-free
+  </text>
+  <rect x="321" y="220" width="290" height="2" rx="1" fill="#A78BFA" opacity="0.48"/>
+  <rect x="626" y="220" width="78" height="2" rx="1" fill="#6366F1" opacity="0.62"/>
+</svg>

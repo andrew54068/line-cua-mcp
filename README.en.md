@@ -1,4 +1,6 @@
-# line-cua-mcp
+<p align="center">
+  <img src="assets/banner.svg" alt="line-cua-mcp — Read LINE's local DB · send cursor-free" width="640">
+</p>
 
 > Language: English | [繁體中文（台灣）README](README.md)
 
