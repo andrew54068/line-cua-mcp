@@ -33,8 +33,23 @@ export interface LineMessage {
   sender: string;
   text: string;
 }
-export interface ChatHistory { chatId: string; name: string | null; messages: LineMessage[]; }
+export interface ChatHistory { chatId: string; name: string | null; messages: LineMessage[]; coverage?: ChatCoverage; }
 export interface ChatSummary { chatId: string; name: string | null; lastUpdated: string | null; isGroup: boolean; }
+/** How much of a chat's history is actually stored in THIS Mac's local LINE DB.
+ *  The DB only holds what LINE Desktop has synced locally — older messages that
+ *  were never loaded are absent, hence `mayExcludeRemoteUnsyncedHistory`. */
+export interface ChatCoverage {
+  source: string;
+  localMessageCount: number;
+  returnedMessageCount?: number;
+  limitApplied?: boolean;
+  oldestLocalMessage: string | null;
+  oldestLocalMessageTs?: number | null;
+  newestLocalMessage: string | null;
+  newestLocalMessageTs?: number | null;
+  mayExcludeRemoteUnsyncedHistory: boolean;
+}
+export interface ChatCoverageResult extends ChatCoverage { chatId: string; name: string | null; }
 export interface DbStatus {
   db: string | null; dbFound: boolean; keyAvailable: boolean;
   decryptOk?: boolean; messageCount?: number; chatCount?: number; detail?: string;
@@ -70,10 +85,14 @@ export const listChats = (limit = 50) => run<ChatSummary[]>(["list-chats", "--li
 export const allChats = () => run<ChatSummary[]>(["list-chats", "--limit", "1000000"]);
 export const readChat = (name: string, limit = 0) =>
   run<ChatHistory>(["read", name, ...(limit ? ["--limit", String(limit)] : [])]);
+/** Cheap local-DB coverage for one chat (count + oldest/newest), without
+ *  pulling the messages. Used by the UI sync path to poll progress. */
+export const chatCoverage = (name: string) => run<ChatCoverageResult>(["coverage", name]);
 export const searchMessages = (text: string, limit = 50) =>
   run<any[]>(["search", text, "--limit", String(limit)]);
 
-/** Format a chat history as a readable transcript. */
+/** Format a chat history as a readable transcript, with a footer that is honest
+ *  about what the local DB does and does not contain. */
 export function formatHistory(h: ChatHistory): string {
   const head = `${h.name ?? h.chatId} — ${h.messages.length} message(s)`;
   const lines = h.messages.map((m) => {
@@ -82,5 +101,19 @@ export function formatHistory(h: ChatHistory): string {
     const body = (m.text ?? "").replace(/\n/g, "\n      ");
     return `${t}  ${who}: ${body}`;
   });
-  return [head, ...lines].join("\n");
+  const out = [head, ...lines];
+  const c = h.coverage;
+  if (c) {
+    const fmt = (s: string | null) => (s ? s.replace("T", " ") : "?");
+    out.push(
+      "",
+      `— local DB: ${c.localMessageCount} message(s) stored` +
+        (c.limitApplied ? `, ${c.returnedMessageCount} returned (limit applied)` : "") +
+        `; oldest ${fmt(c.oldestLocalMessage)}, newest ${fmt(c.newestLocalMessage)}.`,
+      `  This is the complete history PRESENT IN LINE Desktop's local DB. Messages` +
+        ` that were never synced to this Mac are not included. To backfill older` +
+        ` history from LINE's servers, run sync_older_messages and read again.`,
+    );
+  }
+  return out.join("\n");
 }

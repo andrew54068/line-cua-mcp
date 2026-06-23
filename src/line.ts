@@ -25,9 +25,11 @@ import {
   clickPixel,
   typeText,
   pressKey,
+  scroll,
+  bringToFront,
 } from "./driver.js";
 import { ocrOpenChatName } from "./ocr.js";
-import { allChats, type ChatSummary } from "./linedb.js";
+import { allChats, chatCoverage, type ChatSummary, type ChatCoverageResult } from "./linedb.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -232,6 +234,107 @@ async function selectChatImpl(h: LineHandle, name: string): Promise<void> {
   await sleep(150);
   await pressKey(h.pid, "a", { modifiers: ["cmd"], windowId: h.windowId });
   await pressKey(h.pid, "delete", { windowId: h.windowId });
+}
+
+export interface SyncOlderResult {
+  chatId: string;
+  name: string | null;
+  before: { localMessageCount: number; oldestLocalMessage: string | null };
+  after: { localMessageCount: number; oldestLocalMessage: string | null };
+  newOlderMessages: number;
+  oldestMovedBack: boolean;
+  rounds: number;
+  reachedStableTop: boolean;
+  note: string;
+}
+
+/**
+ * Best-effort UI sync: foreground LINE, open the chat, and scroll the message
+ * list upward so LINE Desktop fetches older messages from its servers and
+ * persists them into the local encrypted DB. UNLIKE read_history / list_chats
+ * this is NOT a background operation — it activates LINE (focus is restored
+ * afterward, cursor never moves) and depends on LINE's UI/network. Progress is
+ * measured against the local DB between rounds, so the result reports honestly
+ * whether anything actually backfilled.
+ */
+export async function syncOlderMessages(
+  h: LineHandle,
+  name: string,
+  opts: { maxRounds?: number; pagesPerRound?: number; settleMs?: number } = {},
+): Promise<SyncOlderResult> {
+  return preservingFocus(() => syncOlderMessagesImpl(h, name, opts));
+}
+
+async function syncOlderMessagesImpl(
+  h: LineHandle,
+  name: string,
+  opts: { maxRounds?: number; pagesPerRound?: number; settleMs?: number },
+): Promise<SyncOlderResult> {
+  const maxRounds = Math.max(1, Math.min(opts.maxRounds ?? 8, 40));
+  const pagesPerRound = Math.max(1, Math.min(opts.pagesPerRound ?? 5, 50));
+  const settleMs = Math.max(300, opts.settleMs ?? 1400);
+
+  // Open + verify the chat (reuses the anchored OCR guard in selectChatImpl).
+  await selectChatImpl(h, name);
+
+  const cov0: ChatCoverageResult = await chatCoverage(name);
+
+  // Synthesized PageUp must land on LINE's message list, so the window has to
+  // be frontmost; preservingFocus() restores the prior app when we're done.
+  await bringToFront(h.pid, h.windowId).catch(() => {});
+  await sleep(300);
+
+  const shot = await getShotSize(h.pid, h.windowId);
+  // A point inside the message-history pane: centered horizontally, upper-middle
+  // (below the header, well above the composer at y≈0.89).
+  const px = Math.round(shot.width * 0.5);
+  const py = Math.round(shot.height * 0.4);
+
+  let prevCount = cov0.localMessageCount;
+  let prevOldestTs = cov0.oldestLocalMessageTs ?? null;
+  let stagnant = 0;
+  let rounds = 0;
+  let reachedStableTop = false;
+
+  while (rounds < maxRounds) {
+    rounds++;
+    await clickPixel(h.pid, h.windowId, px, py); // focus the message list
+    await sleep(150);
+    await scroll(h.pid, "up", { by: "page", amount: pagesPerRound, windowId: h.windowId });
+    await sleep(settleMs); // let LINE fetch older messages + persist to the DB
+
+    const cov: ChatCoverageResult = await chatCoverage(name);
+    const grew =
+      cov.localMessageCount > prevCount ||
+      (cov.oldestLocalMessageTs != null &&
+        prevOldestTs != null &&
+        cov.oldestLocalMessageTs < prevOldestTs);
+    if (grew) {
+      stagnant = 0;
+    } else if (++stagnant >= 2) {
+      reachedStableTop = true; // two no-progress rounds → top reached or sync stalled
+      break;
+    }
+    prevCount = cov.localMessageCount;
+    if (cov.oldestLocalMessageTs != null) prevOldestTs = cov.oldestLocalMessageTs;
+  }
+
+  const cov1: ChatCoverageResult = await chatCoverage(name);
+  return {
+    chatId: cov1.chatId,
+    name: cov1.name,
+    before: { localMessageCount: cov0.localMessageCount, oldestLocalMessage: cov0.oldestLocalMessage },
+    after: { localMessageCount: cov1.localMessageCount, oldestLocalMessage: cov1.oldestLocalMessage },
+    newOlderMessages: Math.max(0, cov1.localMessageCount - cov0.localMessageCount),
+    oldestMovedBack:
+      cov1.oldestLocalMessageTs != null &&
+      cov0.oldestLocalMessageTs != null &&
+      cov1.oldestLocalMessageTs < cov0.oldestLocalMessageTs,
+    rounds,
+    reachedStableTop,
+    note:
+      "Best-effort UI sync (NOT background): LINE was foregrounded and the chat scrolled up to make LINE Desktop backfill older messages into the local DB; focus was restored and the cursor never moved. If newOlderMessages is 0 and oldestMovedBack is false, the local DB likely already holds this chat's full history, or LINE did not load more.",
+  };
 }
 
 /** Split a message into parts around @mentions, preserving the original

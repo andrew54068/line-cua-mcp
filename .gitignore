@@ -10,3 +10,10 @@ dist/
 !.yarn/versions
 .pnp.*
 *.log
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Local Claude Code tooling
+.claude/
