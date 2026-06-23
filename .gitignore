@@ -10,3 +10,7 @@ dist/
 !.yarn/versions
 .pnp.*
 *.log
+
+# Machine-specific skills-manager symlinks (point to ~/.agents bullpen)
+.claude/skills/
+.claude/workflows/
