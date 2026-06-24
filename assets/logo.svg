@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="line-cua-mcp logo">
+  <title>line-cua-mcp logo</title>
+  <defs>
+    <linearGradient id="markGradient" x1="28" y1="34" x2="224" y2="224" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="0.54" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+    <linearGradient id="accentGradient" x1="48" y1="65" x2="204" y2="207" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4338CA"/>
+      <stop offset="1" stop-color="#312E81"/>
+    </linearGradient>
+  </defs>
+  <path
+    d="M66 42h103c28 0 51 23 51 51v31c0 28-23 51-51 51h-16v15h52c12 0 22 10 22 22v13h-16v-14c0-3-3-6-6-6h-11v20h-16v-20h-25c-9 0-16-7-16-16v-14H66c-28 0-51-23-51-51V93c0-28 23-51 51-51Z"
+    fill="#312E81"
+    opacity="0.2"
+    transform="translate(0 6)"
+  />
+  <path
+    d="M66 42h103c28 0 51 23 51 51v31c0 28-23 51-51 51h-16v15h52c12 0 22 10 22 22v13h-16v-14c0-3-3-6-6-6h-11v20h-16v-20h-25c-9 0-16-7-16-16v-14H66c-28 0-51-23-51-51V93c0-28 23-51 51-51Z"
+    fill="url(#markGradient)"
+  />
+  <path
+    d="M151 176v13c0 1 1 2 2 2h52c7 0 14 4 18 9-4-15-17-25-33-25h-39Z"
+    fill="url(#accentGradient)"
+    opacity="0.34"
+  />
+  <rect x="51" y="80" width="118" height="14" rx="7" fill="#FFFFFF" opacity="0.9"/>
+  <rect x="51" y="110" width="88" height="14" rx="7" fill="#DDD6FE" opacity="0.78"/>
+  <circle cx="174" cy="117" r="8" fill="#FFFFFF" opacity="0.84"/>
+  <path d="M193 205v20h-15v-20h15Zm34 7v13h-16v-14c0-3-3-6-6-6h-11v20h-1v-20h12c10 0 18 3 22 7Z" fill="#312E81" opacity="0.32"/>
+</svg>

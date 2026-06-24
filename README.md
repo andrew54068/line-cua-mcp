@@ -1,4 +1,6 @@
-# line-cua-mcp
+<p align="center">
+  <img src="assets/banner.svg" alt="line-cua-mcp — 讀取 LINE 本機資料庫，送訊息不移動游標" width="640">
+</p>
 
 > 語言：繁體中文（台灣）｜[English README](README.en.md)
 
