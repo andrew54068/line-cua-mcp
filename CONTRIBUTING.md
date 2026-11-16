@@ -8,7 +8,7 @@ keep it focused are welcome.
 ```bash
 yarn install
 yarn build            # tsc -> dist/, compiles ocr.swift to dist/ocr, copies linedb.py
-yarn test             # pure matcher unit tests (requires a prior `yarn build`)
+yarn test             # synthetic unit tests, no LINE data or UI (requires a prior `yarn build`)
 ```
 
 See the README for the full runtime prerequisites (Python venv with
