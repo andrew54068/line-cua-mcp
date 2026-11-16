@@ -36,7 +36,8 @@ export async function runReader<T = any>(
   const env = Object.entries(process.env)
     .filter(([k]) => k.startsWith("LINE_READER_TEST_"))
     .flatMap(([k, v]) => ["--env", `${k}=${v}`]);
-  let openFailure: (Error & { killed?: boolean; signal?: string }) | null = null;
+  type OpenFailure = Error & { killed?: boolean; signal?: string };
+  let openFailure = null as OpenFailure | null;
   await execFileAsync(
     "/usr/bin/open",
     ["-W", "-n", "-g", "-j", ...env, "-a", READER_APP, "--args", ...args, "--out", dir],
