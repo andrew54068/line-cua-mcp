@@ -7,7 +7,7 @@ keep it focused are welcome.
 
 ```bash
 yarn install
-yarn build            # tsc -> dist/, plus copies linedb.py and ocr.swift into dist/
+yarn build            # tsc -> dist/, compiles ocr.swift to dist/ocr, copies linedb.py
 yarn test             # pure matcher unit tests (requires a prior `yarn build`)
 ```
 

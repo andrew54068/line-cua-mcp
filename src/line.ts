@@ -8,7 +8,7 @@
 //     we pick the largest on-screen one.
 //   - The chat list rows are not reliably in the AX tree, so we cannot pick a
 //     chat by name from the tree directly. Instead we drive the search field
-//     (AXTextField), type the name, then open the top result with a coordinate
+//     (AXTextField), set and verify its value, then open the top result with a coordinate
 //     (pixel) click. The click is a CGEvent posted at the target point; it does
 //     not warp the visible cursor.
 //   - The message composer is an AXTextArea; we focus it with a coordinate click
@@ -21,12 +21,13 @@
 
 import {
   listWindows,
+  getWindowState,
+  cua,
   getShotSize,
   clickPixel,
   typeText,
   pressKey,
   scroll,
-  bringToFront,
 } from "./driver.js";
 import { ocrOpenChatName } from "./ocr.js";
 import { allChats, chatCoverage, type ChatSummary, type ChatCoverageResult } from "./linedb.js";
@@ -120,27 +121,34 @@ export function findChatCells(els: ParsedElement[]): ParsedElement[] {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Read the current system-frontmost application process name. */
+const LINE_BUNDLE_ID = "jp.naver.line.mac";
+
+/** Bundle ID of the frontmost app. Uses LaunchServices (`lsappinfo`), not
+ *  AppleScript/System Events, so it needs no Automation permission. */
 async function frontmostApp(): Promise<string> {
   try {
-    const { stdout } = await execFileAsync("osascript", [
-      "-e",
-      "tell application \"System Events\" to name of first application process whose frontmost is true",
-    ]);
-    return stdout.trim();
+    const { stdout: asn } = await execFileAsync("lsappinfo", ["front"]);
+    const { stdout } = await execFileAsync("lsappinfo", ["info", "-only", "bundleid", asn.trim()]);
+    return stdout.match(/="([^"]+)"/)?.[1] ?? "";
   } catch {
     return "";
   }
 }
 
-/** Re-activate a named application process (used to restore focus after an
- *  operation that unavoidably foregrounded LINE). */
-async function activateApp(name: string): Promise<void> {
-  if (!name || name === "LINE") return;
-  await execFileAsync("osascript", [
-    "-e",
-    `tell application "System Events" to set frontmost of (first process whose name is "${name.replace(/"/g, "")}") to true`,
-  ]).catch(() => {});
+/** Bring an app forward by bundle ID through LaunchServices (`open -b`). */
+async function activateApp(bundleId: string): Promise<void> {
+  if (!bundleId) return;
+  await execFileAsync("open", ["-b", bundleId]).catch(() => {});
+}
+
+/** LINE's Qt window ignores clicks and keys while it is in the background, so
+ *  UI actions bring it forward first; preservingFocus() restores the prior app. */
+export async function activateLine(): Promise<void> {
+  await activateApp(LINE_BUNDLE_ID);
+  await sleep(500);
+  if (await frontmostApp() !== LINE_BUNDLE_ID) {
+    throw new Error("LINE did not become frontmost. No UI input was attempted.");
+  }
 }
 
 /**
@@ -151,34 +159,63 @@ async function activateApp(name: string): Promise<void> {
  * window. We can't prevent the brief activation, but we return focus to where it
  * was. The cursor never moves throughout.
  */
-async function preservingFocus<T>(fn: () => Promise<T>): Promise<T> {
+// ponytail: one UI queue per server process; separate MCP processes still need
+// exclusive access to the desktop during UI operations.
+let uiTail: Promise<unknown> = Promise.resolve();
+export function preservingFocus<T>(fn: () => Promise<T>): Promise<T> {
+  const next = uiTail.then(() => preservingFocusImpl(fn));
+  uiTail = next.catch(() => {});
+  return next;
+}
+
+async function preservingFocusImpl<T>(fn: () => Promise<T>): Promise<T> {
   const before = await frontmostApp();
   try {
     return await fn();
   } finally {
-    if (before && before !== "LINE") {
+    if (before && before !== LINE_BUNDLE_ID) {
       const after = await frontmostApp();
-      if (after === "LINE") await activateApp(before);
+      if (after === LINE_BUNDLE_ID) await activateApp(before);
     }
   }
 }
 
-/**
- * Pixel-click LINE's search text field to focus it. Window-local fraction
- * (0.236, 0.122) — measured from the field's AX geometry. A CGEvent pixel click
- * focuses the field WITHOUT activating LINE (unlike AppleScript AXFocused, which
- * foregrounds the app and steals focus).
- */
-async function focusSearchField(h: LineHandle, shot: { width: number; height: number }): Promise<void> {
-  await clickPixel(h.pid, h.windowId, Math.round(shot.width * 0.236), Math.round(shot.height * 0.122));
+/** Parse the one search field in the first AXWindow only. A menu-only or
+ *  ambiguous tree is not safe to edit. Values use cua-driver's JSON quoting. */
+export function searchFieldState(md: string): { index: number; value: string } {
+  if (!/^- \[\d+\] AXWindow "LINE"(?: |\n|$)/.test(md)) {
+    throw new Error("LINE search window is unavailable (a dialog may be open).");
+  }
+  const window = md.match(/^- \[\d+\] AXWindow "LINE"[^\n]*\n([\s\S]*?)(?=^- \[|(?![\s\S]))/m)?.[1];
+  if (!window) throw new Error("LINE search window is unavailable (a dialog may be open).");
+  const fields = [...window.matchAll(/^\s*- \[(\d+)\] AXTextField(?: "(?:[^"\\]|\\.)*")?(?: = ("(?:[^"\\]|\\.)*"))?(?= |$)/gm)];
+  if (fields.length !== 1) throw new Error("LINE search field is missing or ambiguous. Refusing to type.");
+  return { index: Number(fields[0][1]), value: fields[0][2] ? JSON.parse(fields[0][2]) : "" };
+}
+
+/** Set the actual search field, never the focused field. No clicks or keys;
+ *  read back AXValue and stop if LINE silently ignores the write. */
+export async function setSearchValue(h: LineHandle, value: string): Promise<void> {
+  if (typeof value !== "string" || /[\r\n\0]/.test(value)) throw new Error("Search must be a single-line string.");
+  const windows = await listWindows(h.pid);
+  if (windows.some((w) => w.is_on_screen && w.window_id !== h.windowId && w.bounds.width > 200 && w.bounds.height > 100)) {
+    throw new Error("Another LINE window or dialog is open. Close it before searching.");
+  }
+  const before = searchFieldState((await getWindowState(h.pid, h.windowId)).tree_markdown);
+  await cua("set_value", { pid: h.pid, window_id: h.windowId, element_index: before.index, value });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await sleep(200);
+    const after = searchFieldState((await getWindowState(h.pid, h.windowId)).tree_markdown);
+    if (after.value === value) return;
+  }
+  throw new Error("LINE did not confirm the search value. No typing fallback was attempted.");
 }
 
 /**
- * Select a chat by name: focus the search field, type the name, then PIXEL-CLICK
- * the top result row. Fully cursor-free (CGEvent posts, no cursor move) and
- * focus-free (no window activation).
+ * Select a chat by name: set and verify AXValue on the search field, then
+ * pixel-click the top result. Cursor-free; LINE is foregrounded temporarily.
  *
- * Why pixel-clicks throughout: LINE renders search results in a web view that
+ * Why result pixel-clicks: LINE renders search results in a web view that
  * only INTERMITTENTLY exposes result rows as AXCell elements — they are reliably
  * present visually. A pixel click on the top-result row opens the chat every
  * time; the AX-cell path silently fails when the rows aren't in the tree.
@@ -188,18 +225,14 @@ export async function selectChat(h: LineHandle, name: string): Promise<void> {
   return preservingFocus(() => selectChatImpl(h, name));
 }
 
-async function selectChatImpl(h: LineHandle, name: string): Promise<void> {
+export async function selectChatImpl(h: LineHandle, name: string, headerRight?: number): Promise<void> {
+  await activateLine();
   const shot = await getShotSize(h.pid, h.windowId);
   if (!shot.width || !shot.height) {
     throw new Error("Could not determine LINE window dimensions for chat selection.");
   }
 
-  // Focus search (pixel click), clear any prior query, type the name.
-  await focusSearchField(h, shot);
-  await sleep(250);
-  await pressKey(h.pid, "a", { modifiers: ["cmd"], windowId: h.windowId });
-  await pressKey(h.pid, "delete", { windowId: h.windowId });
-  await typeText(h.pid, name);
+  await setSearchValue(h, name);
   await sleep(1100); // let LINE filter the result list
 
   // Pixel-click the top result row. The first result sits just below the search
@@ -217,7 +250,7 @@ async function selectChatImpl(h: LineHandle, name: string): Promise<void> {
   // anchored matcher as the send guard (no substring false-positives). Groups
   // are allowed here because selecting/reading a group is harmless — the 1:1
   // restriction is enforced separately in sendMessage's guard.
-  const header = await ocrOpenChatName(h);
+  const header = await ocrOpenChatName(h, headerRight);
   const a = normalizeName(header);
   const b = normalizeName(name);
   if (!a) {
@@ -229,11 +262,8 @@ async function selectChatImpl(h: LineHandle, name: string): Promise<void> {
     );
   }
 
-  // Clear the search box so the list returns to normal next time.
-  await focusSearchField(h, shot);
-  await sleep(150);
-  await pressKey(h.pid, "a", { modifiers: ["cmd"], windowId: h.windowId });
-  await pressKey(h.pid, "delete", { windowId: h.windowId });
+  // Clear only the actual search field; never send keys to the composer.
+  await setSearchValue(h, "");
 }
 
 export interface SyncOlderResult {
@@ -281,8 +311,7 @@ async function syncOlderMessagesImpl(
 
   // Synthesized PageUp must land on LINE's message list, so the window has to
   // be frontmost; preservingFocus() restores the prior app when we're done.
-  await bringToFront(h.pid, h.windowId).catch(() => {});
-  await sleep(300);
+  await activateLine();
 
   const shot = await getShotSize(h.pid, h.windowId);
   // A point inside the message-history pane: centered horizontally, upper-middle
@@ -701,29 +730,12 @@ async function sendMessageImpl(
   }
 }
 
-/** Resolve the composer click point. Reads the message-composer AXTextArea
- *  geometry via System Events (accurate across window sizes); falls back to the
- *  empirically-measured window fraction (0.72, 0.89) if AX lookup fails. */
+/** Resolve the composer click point: the measured window fraction (0.72,
+ *  0.89), inside the composer at the bottom of the chat pane. (An earlier AX
+ *  geometry lookup went through System Events, which needs an Automation
+ *  grant for the host app; it was removed for that reason.) */
 async function composerPoint(
   shot: { width: number; height: number },
 ): Promise<{ x: number; y: number }> {
-  try {
-    const script = `tell application "System Events" to tell process "LINE"
-set w to item 1 of (windows whose name is "LINE")
-set {wx, wy} to position of w
-set {ww, wh} to size of w
-set ta to text area 1 of splitter group 1 of splitter group 1 of w
-set {tx, ty} to position of ta
-set {tsw, tsh} to size of ta
-return ((((tx - wx) + (tsw / 2)) / ww) as text) & "," & ((((ty - wy) + (tsh / 2)) / wh) as text)
-end tell`;
-    const { stdout } = await execFileAsync("osascript", ["-e", script]);
-    const [fx, fy] = stdout.trim().split(",").map(Number);
-    if (Number.isFinite(fx) && Number.isFinite(fy) && fx > 0 && fx < 1 && fy > 0 && fy < 1) {
-      return { x: Math.round(shot.width * fx), y: Math.round(shot.height * fy) };
-    }
-  } catch {
-    /* fall through to fraction */
-  }
   return { x: Math.round(shot.width * 0.72), y: Math.round(shot.height * 0.89) };
 }

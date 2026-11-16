@@ -13,8 +13,11 @@ import {
   sendMessage,
   syncOlderMessages,
 } from "./line.js";
+import { sendFiles, type SendFilesOptions } from "./files.js";
 import { checkPermissions } from "./driver.js";
-import { dbStatus, listChats, readChat, formatHistory } from "./linedb.js";
+import { dbStatus, listChats, readChat, formatHistory, listAttachments } from "./linedb.js";
+import { getAttachment } from "./attachments.js";
+import { readFile } from "node:fs/promises";
 
 const server = new Server(
   { name: "line-cua-mcp", version: "0.1.0" },
@@ -72,6 +75,35 @@ const TOOLS = [
     },
   },
   {
+    name: "list_attachments",
+    description:
+      "List a chat's attachments (images, videos, voice messages, files such as PDF/Word/Excel, stickers), newest first, from LINE's local database — fully background, no UI, no network. Each item has the message id for get_attachment, plus file name, size, image size or duration, the date LINE's server copy expires, and where LINE recorded a local copy (savedCopy / sentFrom).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Chat name (friend / group / community) or raw chatId." },
+        kind: { type: "string", enum: ["image", "video", "audio", "file", "sticker"], description: "Only this kind." },
+        limit: { type: "integer", description: "Max items. Default 50.", minimum: 1 },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_attachment",
+    description:
+      "Get one message's attachment. Default download:false reads local cache only, with no network. Opt-in download:true may foreground LINE and download a unique unexpired file (ct14) through its official UI (may open the document in its default app; pdf/txt/csv/docx/xlsx/pptx only); returns a DB-recorded saved path and exact byte count without opening that file. Unsupported/ambiguous targets or uncertain OCR are refused; focus restoration is best-effort if LINE opens another app. Returns the full original when LINE's cache has it (files sent from this Mac, voice messages, stickers), else a small preview for images/videos (~534 px wide). Files are decrypted into a private temp folder and returned as paths; images are also shown inline. Copies LINE recorded in your own folders (savedCopy / sentFrom) are returned as paths and not opened. LINE's folders are read only by LINE Reader.app. Get message ids from list_attachments or read_history.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        messageId: { type: "string", description: "Message id from list_attachments or read_history." },
+        download: { type: "boolean", default: false, description: "Opt in to official LINE UI download if no full cache copy exists. File attachments only; may fail closed on OCR/layout uncertainty. No direct server requests." },
+      },
+      required: ["messageId"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "sync_older_messages",
     description:
       "Best-effort: backfill OLDER history into the local DB for one chat by driving the LINE UI. UNLIKE read_history / list_chats this is NOT background — it foregrounds LINE, opens the chat, and scrolls the conversation upward so LINE Desktop fetches older messages from its servers and persists them to the local encrypted DB; focus is restored afterward and the cursor never moves. Requires LINE to be running. Reliability depends on LINE's UI/network; returns before/after local coverage (count + oldest stored, newOlderMessages, oldestMovedBack) so you can see what backfilled. After it runs, call read_history again to get the expanded history.",
@@ -91,6 +123,22 @@ const TOOLS = [
         },
       },
       required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "send_files",
+    description: "Prepare local files for the line-send-files skill native chooser workflow. Pins exact DB chatId/name and rejects groups. auto=false validates names, sizes and hashes without upload. auto=true is refused because file-URL paste failed in this LINE version. The skill uses native UI and verifies outgoing delivered file receipts afterward.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chatId: { type: "string", description: "Exact u-prefixed 1:1 chatId from list_chats." },
+        name: { type: "string", description: "Exact cached DB name paired with chatId." },
+        uiName: { type: "string", description: "Exact separately verified LINE UI name if different from the cached DB name." },
+        paths: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 20 },
+        auto: { type: "boolean", description: "Default false = prepare only. True is currently refused; use the skill native picker workflow." },
+      },
+      required: ["chatId", "name", "paths"],
       additionalProperties: false,
     },
   },
@@ -168,6 +216,21 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const chats = await listChats((args as any).limit ?? 50);
         return ok(JSON.stringify(chats, null, 2));
       }
+      case "list_attachments": {
+        const res = await listAttachments(String((args as any).name), (args as any).kind, (args as any).limit ?? 50);
+        return ok(JSON.stringify(res, null, 2));
+      }
+      case "get_attachment": {
+        const download = (args as any).download;
+        if (download !== undefined && typeof download !== "boolean") throw new Error("download must be a boolean.");
+        const res = await getAttachment(String((args as any).messageId), download ?? false);
+        const content: any[] = [{ type: "text", text: JSON.stringify(res, null, 2) }];
+        const shown = [res.file, res.preview].find(
+          (f) => f && f.mimeType && /^image\/(jpeg|png|gif|webp)$/.test(f.mimeType) && f.bytes <= 4 * 1024 * 1024,
+        );
+        if (shown) content.push({ type: "image", data: (await readFile(shown.path)).toString("base64"), mimeType: shown.mimeType });
+        return { content };
+      }
       case "sync_older_messages": {
         const h = await locateLine();
         const res = await syncOlderMessages(h, String((args as any).name), {
@@ -175,6 +238,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           pagesPerRound: (args as any).pagesPerRound,
         });
         return ok(JSON.stringify(res, null, 2));
+      }
+      case "send_files": {
+        return ok(JSON.stringify(await sendFiles(args as unknown as SendFilesOptions), null, 2));
       }
       case "send_message": {
         const h = await locateLine();

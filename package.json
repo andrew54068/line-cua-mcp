@@ -16,11 +16,13 @@
   "bin": "./dist/server.js",
   "main": "./dist/server.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json && cp src/ocr.swift dist/ocr.swift && cp src/linedb.py dist/linedb.py",
+    "build": "tsc -p tsconfig.json && /usr/bin/swiftc -O src/ocr.swift -o dist/ocr && cp src/linedb.py dist/linedb.py",
     "dev": "tsx src/server.ts",
     "probe": "tsx src/probe.ts",
     "verify": "tsx src/verify-cua.ts",
-    "test": "yarn build && node test/matcher.test.mjs"
+    "test": "yarn build && node test/matcher.test.mjs && node test/files.test.mjs && node test/helper.test.mjs && node test/linedb.test.mjs && node test/attachments.test.mjs && node test/search.test.mjs && node test/ocr.test.mjs && python3 test/download-target.test.py",
+    "helper:build": "bash scripts/build-helper.sh",
+    "helper:install": "bash scripts/install-helper.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.1",

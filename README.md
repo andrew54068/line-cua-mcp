@@ -21,6 +21,14 @@ macOS 專用的 LINE Desktop MCP server。**讀取**訊息時，直接讀 LINE �
 - **讀取是資料庫路徑。** macOS 版 LINE Desktop 是 **Qt6/QML** app，訊息文字由 GPU 繪製，accessibility tree 裡拿不到；但歷史訊息存在本機 **wxSQLite3 / QtCipherSqlitePlugin AES-128-CBC** 加密 SQLite DB（`…/Data/db/qwb*.edb`）。`read_history` / `list_chats` 會用 macOS keychain 裡的帳號金鑰解開唯讀快照，回傳**本機 DB 內現有的**歷史紀錄（每一則本機已存的訊息，含 sender、timestamp、direction），並附上涵蓋範圍（本機則數、最舊／最新時間）。本機 DB 只存有 LINE Desktop 已同步到這台 Mac 的訊息；從未載入到本機的較舊訊息不在其中（可用 `sync_older_messages` 回補）。這條路徑完全背景執行，不碰 UI。舊版曾用 OCR 讀螢幕，只能看到目前畫面；那條路徑已移除。
 - **送訊息是 UI 路徑，但不移動游標。** 不能靠改 DB 送訊息，所以 `send_message` 會透過 cua-driver 操作 LINE UI：CGEvent 會送到指定座標／按鍵，但不 warp 可見游標；LINE 可能短暫跳到前景開啟目標聊天，完成後會把原本的前景 app 切回來。
 
+## 附件下載（須明確啟用）
+
+`get_attachment({"messageId":"…"})` 預設只讀取本機快取。加入 `"download":true` 後，若沒有完整快取，工具才會嘗試透過 LINE Desktop 官方介面下載。這個流程會連線至 LINE 伺服器、將 LINE 切到前景，且 **LINE 可能使用預設應用程式開啟下載的文件**。目前只支援一般檔案訊息（ct14），副檔名限 `.pdf`、`.txt`、`.csv`、`.docx`、`.xlsx`、`.pptx`。不支援指令稿、執行檔、舊版 Office 檔案及含巨集的 Office 檔案；符合副檔名也不代表內容安全。
+
+工具會確認本機資料庫中的檔名唯一（包含文字訊息提到的檔名）、聊天室名稱不重複、聊天室標題符合目標，搜尋結果中只有一筆名稱完全相符的聊天室，並顯示「找到 1 則訊息」，對話中則必須出現完全相符且已標示的檔名。點擊座標來自 Vision 文字辨識；檔名截斷、重複、缺少標示或辨識不確定時，一律停止。目前只支援黃色／橘色搜尋標示；已過期或無法確認到期時間的附件不會下載。同一個伺服器程序會依序執行介面操作；下載期間請勿操作 LINE 或執行其他自動化程序。
+
+只有 LINE 資料庫記錄下載路徑，且下載位元組數符合預期時，才會回傳 `downloaded.path` 與 `downloaded.bytes`。Node 不會開啟或檢查該路徑，因此無法獨立確認檔案目前仍存在。LINE 開啟文件後，文件的應用程式可能停在前景；工具只能盡力還原原本的前景應用程式。逾時或出現儲存對話框不算成功，也不會重複點擊附件。不會回傳媒體金鑰，也不會直接呼叫 LINE 伺服器 API。此下載流程尚未通過實際介面驗證；本機資料庫未同步的訊息無法檢查，也無法保證帳號不受限制。
+
 ## MCP 工具
 
 | Tool | 功能 |
@@ -30,11 +38,25 @@ macOS 專用的 LINE Desktop MCP server。**讀取**訊息時，直接讀 LINE �
 | `read_history` | 依名稱或 chatId 從已解密的本機 DB 讀取聊天**本機已存的**歷史紀錄：文字、direction、絕對時間戳，並附本機涵蓋範圍。不移動游標、不切前景、不用 OCR。 |
 | `sync_older_messages` | **盡力而為、走 UI（非背景）：** 讓 LINE 跳到前景並把聊天往上捲，促使 LINE 把較舊訊息回補進本機 DB。不移動游標、會還原焦點，並回報前後涵蓋範圍。需要 LINE 正在執行。 |
 | `select_chat` | 透過 UI 開啟指定聊天（搜尋 → pixel-click 第一筆結果）。供 `send_message` 使用。不移動游標；會還原焦點。 |
+| `send_files` | 精確指定 1:1 chatId／DB name／UI alias，準備檔名、大小與 SHA-256；實際上傳使用 line-send-files 技能的原生選檔流程，再從 DB 核對送達紀錄。 |
 | `send_message` | 透過 UI 對指定聊天送出或留下草稿。送出前有 anchored name、1:1-only、DB cross-check 等防護。 |
 
 ## 本機資料庫與金鑰
 
-`src/linedb.py`（透過專案 venv 與 `apsw-sqlite3mc` 執行）負責解密。它會建立**唯讀快照**：把 `qwb*.edb`、`-wal`、`-shm` 複製到暫存資料夾，再開啟那份複本，所以不會鎖住或改動 LINE 正在寫入的檔案。cipher 參數是：
+`src/linedb.py`（透過專案 venv 與 `apsw-sqlite3mc` 執行）負責解密，但它**不會自己打開 LINE 的資料夾**。macOS 會保護其他 App 的資料（「想要取用其他 App 的資料」），而系統提示框會顯示「是哪個程序在要求」。所以所有讀取 LINE 資料夾的動作，都交給一個有名字、有用途說明的小 App：**LINE Reader.app**（`helper/line-reader.c`，bundle ID `com.dawson.line-reader`）。
+
+- LINE Reader 把 `qwb*.edb`、`-wal`、`-shm` 複製到呼叫端建立的私人暫存資料夾（權限 0700），再用 FIFO 把 keychain 裡的金鑰交給 `linedb.py`，金鑰不會落在一般檔案裡。`linedb.py` 只開啟那份複本，所以不會鎖住或改動 LINE 正在寫入的檔案。
+- LINE Reader 只複製、不寫入 LINE 的資料、不連網、不執行腳本，也不載入使用者可改寫的程式碼（hardened runtime + library validation）。所以就算給了它權限，別的程序也無法借它執行其他程式；最多只能拿到 LINE 資料的複本。
+- `linedb.py` 透過 LaunchServices（`open -W -a "LINE Reader.app"`）啟動它，所以 macOS 的提示框會顯示：**「LINE Reader」想要取用其他 App 的資料**，並附上用途說明：*Copies LINE Desktop's local chat database and attachment cache into a private temporary folder…*。如果出現的提示框名稱是 Python、node 或其他程式，那不是本專案發出的，請按「不允許」。
+- macOS 對這類授權只記得單一程序，所以每次讀取都可能再問一次。想要完全不跳提示，可以在「系統設定 → 隱私權與安全性 → 完全取用磁碟」手動加入 `~/Applications/LINE Reader.app`。要不要給，由你決定；本專案不會自動授權。
+
+在跑 LINE 的那台 Mac 上安裝（建置是 deterministic 的；內容沒變就不會覆蓋，既有授權也會保留）：
+
+```bash
+yarn helper:install   # 建置並安裝到 ~/Applications/LINE Reader.app
+```
+
+cipher 參數是：
 
 ```sql
 PRAGMA cipher='aes128cbc';
@@ -46,7 +68,7 @@ PRAGMA key='<32-hex>';
 
 ### 金鑰
 
-32-hex 金鑰不會由本專案寫進 repo 或明文檔案。`linedb.py` 會從 `$LINE_DB_KEY` 或 macOS login keychain service `line-cua-mcp-dbkey` 讀取：
+32-hex 金鑰不會由本專案寫進 repo 或明文檔案。金鑰存在 macOS login keychain service `line-cua-mcp-dbkey`；LINE Reader 用 Apple 內建的 `security` 工具讀取（這個 keychain 項目本來就信任它，所以不會多跳提示），再經由 FIFO 交給 `linedb.py`。設定 `$LINE_DB_KEY` 可以覆寫 keychain：
 
 ```bash
 security find-generic-password -s line-cua-mcp-dbkey -w   # 讀回金鑰
@@ -79,7 +101,7 @@ security find-generic-password -s line-cua-mcp-dbkey -w   # 讀回金鑰
 
 ## 送訊息安全機制
 
-`send_message` 是唯一會改變外部狀態的操作，所以加了多層防護：
+`send_message` 會改變外部狀態，所以加了多層防護；`send_files` 僅準備檔案，技能的原生選檔操作才會送出：
 
 1. **重新選擇**指定聊天，不會送到「目前剛好打開的聊天室」。
 2. **Anchored name match**（不是 substring）：OCR 讀到的聊天標題正規化後必須等於目標名稱，只容許尾端多一個非英數字元（LINE header icon 造成的 OCR 雜訊）。例如短目標 `明` 不會通過 `小明子` / `陳明婷`；`Alice` 不會通過 `Alice2`。
@@ -104,7 +126,7 @@ security find-generic-password -s line-cua-mcp-dbkey -w   # 讀回金鑰
   ```bash
   python3 -m venv .venv && .venv/bin/pip install apsw-sqlite3mc
   ```
-- `PATH` 上的 `python3` 需要能 import **Pillow (PIL)**；send-path header crop 會在 `ocr.ts` shell out 使用它（`pip install Pillow`）。讀取路徑不需要 Pillow。
+- **Xcode Command Line Tools**（`/usr/bin/swiftc`）：`yarn build` 會把 `src/ocr.swift` 編譯成 `dist/ocr`，供 UI 路徑的 OCR 使用。讀取路徑不需要。
 - DB 金鑰已放進 keychain service `line-cua-mcp-dbkey`（見上方）。
 - 安裝 **cua-driver**，並授權 Accessibility / Screen Recording（`select_chat` / `send_message` 需要）：
   ```bash
@@ -116,7 +138,7 @@ security find-generic-password -s line-cua-mcp-dbkey -w   # 讀回金鑰
 
 ```bash
 yarn install
-yarn build            # tsc + 複製 ocr.swift / linedb.py 到 dist/
+yarn build            # tsc + 編譯 dist/ocr + 複製 linedb.py 到 dist/
 node dist/server.js   # MCP stdio server
 ```
 
@@ -141,3 +163,9 @@ DB 路徑與 cipher 參數在 `src/linedb.py`。送訊息用的 OCR crop 區域�
 **商標：**「LINE」是 LINE Corporation／NAVER 的商標。本專案是獨立專案，與 LINE／NAVER 無關，也不代表 LINE／NAVER 認可或支持。
 
 隱私與金鑰處理說明請見 [`SECURITY.md`](SECURITY.md)。
+
+## 檔案傳送
+
+`send_files` 需要 `chatId`、`name`、絕對路徑 `paths`，可另給經過畫面確認的 `uiName`。`auto:false` 只準備檔名、bytes、SHA-256，不碰 UI。檔案 URL 貼上在目前 LINE 版本實測無效，因此 `auto:true` 明確拒絕，不會嘗試上傳。
+
+已驗證的傳送流程在 bullpen 的 `comm/line-send-files/SKILL.md`：先確認 Mac 已解鎖及一對一收件人，透過 native cua_repl 的 Open 選檔視窗選取精確檔案，再按 Open。2026-09-30 實際傳送四份 PDF 成功。每份須在 pinned chat 出現新的 outgoing file message，且檔名、FILE_SIZE、status=2、errorCode=0 相符，保存訊息 ID 後才可回報成功。
