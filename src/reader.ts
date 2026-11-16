@@ -36,7 +36,7 @@ export async function runReader<T = any>(
   const env = Object.entries(process.env)
     .filter(([k]) => k.startsWith("LINE_READER_TEST_"))
     .flatMap(([k, v]) => ["--env", `${k}=${v}`]);
-  let openFailure: Error | null = null;
+  let openFailure: (Error & { killed?: boolean; signal?: string }) | null = null;
   await execFileAsync(
     "/usr/bin/open",
     ["-W", "-n", "-g", "-j", ...env, "-a", READER_APP, "--args", ...args, "--out", dir],
@@ -49,7 +49,12 @@ export async function runReader<T = any>(
   while (!existsSync(resultPath)) {
     if (openFailure) {
       await rm(dir, { recursive: true, force: true });
-      throw new Error(`LINE Reader failed to run: ${(openFailure as Error).message}`);
+      if (openFailure.killed || openFailure.signal) {
+        throw new Error(
+          "LINE Reader did not finish. Check the Mac that runs LINE for an unanswered LINE Reader permission prompt.",
+        );
+      }
+      throw new Error(`LINE Reader failed to run: ${openFailure.message}`);
     }
     if (await helperRunning()) idleSince = 0;
     else if (!idleSince) idleSince = Date.now();
