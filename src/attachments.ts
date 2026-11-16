@@ -196,11 +196,23 @@ export async function getAttachment(messageId: string, download: boolean = false
       );
     }
   }
-  if (download && !res.file) {
+  const skip = download && !res.file ? downloadSkipReason(info) : null;
+  if (skip) notes.push(`${skip} Returning the cached result instead.`);
+  else if (download && !res.file) {
     res.downloaded = await downloadViaLine(info);
     notes.push("LINE recorded the saved path and exact expected byte count. This tool did not open or stat that file; its current existence is not independently verified.");
   }
   return res;
+}
+
+/** Reasons a download is simply not possible. Anything else that looks wrong
+ *  still throws in assertDownloadTarget. */
+export function downloadSkipReason(info: AttachmentSources, now = Date.now()): string | null {
+  const a = info.attachment;
+  if (a.kind !== "file") return `UI download supports only file attachments, not ${a.kind}.`;
+  if (a.fileName && !/\.(pdf|txt|csv|docx|xlsx|pptx)$/i.test(a.fileName)) return "UI download supports only pdf/txt/csv/docx/xlsx/pptx files.";
+  if (a.expired || (a.expiresAt && Date.parse(a.expiresAt) <= now)) return "The attachment expired on LINE's servers.";
+  return null;
 }
 
 /** Fail closed before any UI action. Only ordinary ct14 files are supported. */

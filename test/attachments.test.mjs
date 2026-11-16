@@ -36,7 +36,7 @@ console.log("✓ sniffs JPEG, PDF, M4A, and ZIP (docx/xlsx) headers");
 console.log("attachments: 4 checks passed");
 
 // Synthetic metadata only: no LINE reads and no UI operations.
-const { assertDownloadTarget, verifiedFilenameBox, verifiedResultRow, verifiedDownload, getAttachment } = await import('../dist/attachments.js');
+const { assertDownloadTarget, verifiedFilenameBox, verifiedResultRow, verifiedDownload, getAttachment, downloadSkipReason } = await import('../dist/attachments.js');
 const target = {
   id: 'm1', chatId: 'u1', chat: 'Alice', time: null, direction: 'in', sender: 'Alice',
   attachment: { kind: 'file', fileName: 'report.pdf', fileSize: 1234, expiresAt: '2099-01-01T00:00:00Z', cachedPreview: false },
@@ -55,6 +55,12 @@ for (const change of [
 for (const name of ['a.sh', 'a.command', 'a.app', 'a.webloc', 'a.docm', 'a.xls', 'a.pdf.command']) {
   assert.throws(() => assertDownloadTarget({ ...target, attachment: { ...target.attachment, fileName: name } }), /Only pdf/);
 }
+assert.equal(downloadSkipReason(target), null);
+assert.match(downloadSkipReason({ ...target, attachment: { ...target.attachment, kind: 'image' } }), /only file/);
+assert.match(downloadSkipReason({ ...target, attachment: { ...target.attachment, fileName: 'a.sh' } }), /pdf\/txt/);
+assert.match(downloadSkipReason({ ...target, attachment: { ...target.attachment, expired: true } }), /expired/);
+assert.equal(downloadSkipReason({ ...target, sources: { downloadNameMatches: 2 } }), null);
+assert.throws(() => assertDownloadTarget({ ...target, sources: { downloadNameMatches: 2 } }), /ambiguous/);
 for (const value of ['true', 'false', 1, 0, null, {}]) {
   await assert.rejects(getAttachment('unused', value), /download must be a boolean/);
 }

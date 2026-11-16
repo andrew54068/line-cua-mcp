@@ -16,6 +16,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const READER_APP =
   process.env.LINE_READER_APP ?? join(homedir(), "Applications", "LINE Reader.app");
 
+const helperRunning = () =>
+  execFileAsync("/usr/bin/pgrep", ["-x", "line-reader"]).then(() => true, () => false);
+
 /** Run one LINE Reader command (`copy` / `list`) into a fresh private folder
  *  (mode 0700). Returns the folder and its result.json; the caller removes the
  *  folder. Throws with LINE Reader's own error message on failure. */
@@ -33,15 +36,27 @@ export async function runReader<T = any>(
   const env = Object.entries(process.env)
     .filter(([k]) => k.startsWith("LINE_READER_TEST_"))
     .flatMap(([k, v]) => ["--env", `${k}=${v}`]);
+  let openFailure: Error | null = null;
   await execFileAsync(
     "/usr/bin/open",
     ["-W", "-n", "-g", "-j", ...env, "-a", READER_APP, "--args", ...args, "--out", dir],
     { timeout: timeoutMs },
-  ).catch(() => {});
+  ).catch((e) => { openFailure = e; });
   // `open -W` returns early when the helper exits first, so wait for its result.
   const resultPath = join(dir, "result.json");
   const deadline = Date.now() + timeoutMs;
+  let idleSince = 0;
   while (!existsSync(resultPath)) {
+    if (openFailure) {
+      await rm(dir, { recursive: true, force: true });
+      throw new Error(`LINE Reader failed to run: ${(openFailure as Error).message}`);
+    }
+    if (await helperRunning()) idleSince = 0;
+    else if (!idleSince) idleSince = Date.now();
+    else if (Date.now() - idleSince > 2000) {
+      await rm(dir, { recursive: true, force: true });
+      throw new Error("LINE Reader exited without a result. Check that LINE Reader.app is intact, signed, and allowed by Gatekeeper.");
+    }
     if (Date.now() > deadline) {
       await rm(dir, { recursive: true, force: true });
       throw new Error(
