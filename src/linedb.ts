@@ -1,8 +1,9 @@
 // linedb.ts — read LINE's encrypted local message DB via the Python helper
 // (linedb.py + apsw-sqlite3mc). This is the fully-background, cursor-free,
 // full-history data path: no UI, no OCR, no foreground, no scrolling. The
-// helper decrypts a read-only snapshot of LINE's wxSQLite3 AES-128 DB using the
-// account key from the macOS keychain (service "line-cua-mcp-dbkey").
+// helper decrypts a read-only copy of LINE's wxSQLite3 AES-128 DB. The copy and
+// the account key (keychain service "line-cua-mcp-dbkey") come from LINE
+// Reader.app, the only process that touches LINE's folders (see linedb.py).
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -32,6 +33,40 @@ export interface LineMessage {
   direction: "in" | "out";
   sender: string;
   text: string;
+  attachment?: AttachmentMeta;
+}
+/** Attachment facts from LINE's DB records only. `savedCopy` / `sentFrom` are
+ *  paths LINE recorded outside its cache; the file may have moved since. */
+export interface AttachmentMeta {
+  kind: "image" | "video" | "audio" | "file" | "sticker";
+  fileName?: string;
+  fileSize?: number;
+  width?: number;
+  height?: number;
+  extension?: string;
+  durationMs?: number;
+  expiresAt?: string;
+  expired?: boolean;
+  stickerId?: string;
+  packageId?: string;
+  alt?: string;
+  savedCopy?: string;
+  sentFrom?: string;
+  cachedPreview: boolean;
+}
+export interface AttachmentListItem extends AttachmentMeta {
+  id: string; time: string | null; direction: "in" | "out"; sender: string;
+}
+/** Internal: includes the message's media key. Never return it to MCP clients. */
+export interface AttachmentSources {
+  id: string; chatId: string; chat: string | null; time: string | null;
+  direction: "in" | "out"; sender: string;
+  attachment: AttachmentMeta;
+  sources: {
+    keyMaterial?: string; thumbPath?: string; uploadBlob?: string;
+    downloadedPath?: string; downloadedFileSize?: number; downloadNameMatches?: number;
+    chatCacheDir?: string; stickerDir?: string;
+  };
 }
 export interface ChatHistory { chatId: string; name: string | null; messages: LineMessage[]; coverage?: ChatCoverage; }
 export interface ChatSummary { chatId: string; name: string | null; lastUpdated: string | null; isGroup: boolean; }
@@ -51,6 +86,7 @@ export interface ChatCoverage {
 }
 export interface ChatCoverageResult extends ChatCoverage { chatId: string; name: string | null; }
 export interface DbStatus {
+  helper?: string; helperInstalled?: boolean;
   db: string | null; dbFound: boolean; keyAvailable: boolean;
   decryptOk?: boolean; messageCount?: number; chatCount?: number; detail?: string;
 }
@@ -78,6 +114,9 @@ async function run<T>(args: string[]): Promise<T> {
   }
 }
 
+export interface OutgoingFileMessage { id: string; ts: number; metadata: Record<string, unknown>; status: number | null; errorCode: number | null; text: string | null; }
+export const outgoingFiles = (chatId: string, since = 0) => run<OutgoingFileMessage[]>(["files", chatId, "--since", String(since)]);
+
 export const dbStatus = () => run<DbStatus>(["status"]);
 export const listChats = (limit = 50) => run<ChatSummary[]>(["list-chats", "--limit", String(limit)]);
 /** Every chat in the local DB (no practical limit). Ground truth for the send
@@ -90,6 +129,11 @@ export const readChat = (name: string, limit = 0) =>
 export const chatCoverage = (name: string) => run<ChatCoverageResult>(["coverage", name]);
 export const searchMessages = (text: string, limit = 50) =>
   run<any[]>(["search", text, "--limit", String(limit)]);
+export const listAttachments = (name: string, kind?: string, limit = 50) =>
+  run<{ chatId: string; name: string | null; attachments: AttachmentListItem[] }>(
+    ["attachments", name, "--limit", String(limit), ...(kind ? ["--kind", kind] : [])]);
+export const attachmentSources = (messageId: string) =>
+  run<AttachmentSources>(["attachment-sources", messageId]);
 
 /** Format a chat history as a readable transcript, with a footer that is honest
  *  about what the local DB does and does not contain. */
@@ -99,7 +143,7 @@ export function formatHistory(h: ChatHistory): string {
     const t = m.time ? m.time.replace("T", " ") : "?";
     const who = m.direction === "out" ? "me" : (m.sender || "them");
     const body = (m.text ?? "").replace(/\n/g, "\n      ");
-    return `${t}  ${who}: ${body}`;
+    return `${t}  ${who}: ${body}${m.attachment ? `  (id ${m.id})` : ""}`;
   });
   const out = [head, ...lines];
   const c = h.coverage;

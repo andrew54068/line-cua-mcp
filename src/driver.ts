@@ -46,10 +46,11 @@ async function getClient(): Promise<Client> {
     clientPromise = (async () => {
       const transport = new StdioClientTransport({
         command: CUA_DRIVER,
-        // --no-daemon-relaunch keeps the MCP server in-process: the element
-        // index cache lives in this one long-lived process (which is what we
-        // need), and we avoid a daemon-forwarding bug that crashes type_text.
-        args: ["mcp", "--no-daemon-relaunch"],
+        // Proxy to the CuaDriver daemon (CuaDriver.app) so macOS attributes
+        // Accessibility / Screen Recording use to "CuaDriver", which already
+        // holds those grants. In-process mode (--no-daemon-relaunch) would make
+        // macOS attribute them to whatever app hosts this MCP server.
+        args: ["mcp"],
         env: {
           ...process.env,
           PATH: `${join(homedir(), ".local", "bin")}:${process.env.PATH ?? ""}`,
@@ -238,13 +239,6 @@ export function invalidateSnapshot(pid: number, windowId: number): void {
 
 export async function checkPermissions(): Promise<any> {
   return cua("check_permissions", {});
-}
-
-/** Activate a window so synthesized keystrokes (e.g. scroll's PageUp) land on
- *  it. Unlike the background read path, this DOES foreground the app — callers
- *  that need to stay background must not use it (and should restore focus). */
-export async function bringToFront(pid: number, windowId: number): Promise<void> {
-  await cua("bring_to_front", { pid, window_id: windowId });
 }
 
 /**
